@@ -40,7 +40,13 @@ export default function DashboardPage() {
   useEffect(() => {
     fetch("/api/dashboard")
       .then((res) => res.json())
-      .then(setData)
+      .then((json) => {
+        if (json.error) {
+          console.error("Dashboard API error:", json.error);
+          return;
+        }
+        setData(json);
+      })
       .catch(console.error)
       .finally(() => setLoading(false));
   }, []);
@@ -53,16 +59,17 @@ export default function DashboardPage() {
     );
   }
 
-  if (!data) {
+  if (!data || !data.cashPositions) {
     return (
       <div className="text-center py-12 text-red-500">
         Failed to load dashboard data. Make sure you have run{" "}
+        <code className="bg-slate-100 px-2 py-1 rounded">npx prisma db push</code> and{" "}
         <code className="bg-slate-100 px-2 py-1 rounded">npm run seed</code> first.
       </div>
     );
   }
 
-  const totalCashPkr = data.cashPositions.reduce((sum, a) => sum + a.balancePkr, 0);
+  const totalCashPkr = (data.cashPositions || []).reduce((sum, a) => sum + a.balancePkr, 0);
 
   return (
     <div className="space-y-6">
@@ -119,8 +126,8 @@ export default function DashboardPage() {
       <div className="bg-white rounded-xl border border-slate-200 p-5">
         <h2 className="text-sm font-semibold text-slate-900 mb-4">Revenue by Line of Service (MTD)</h2>
         <div className="space-y-3">
-          {Object.entries(data.revenueByLine).map(([line, amount]) => {
-            const maxRevenue = Math.max(...Object.values(data.revenueByLine), 1);
+          {Object.entries(data.revenueByLine || {}).map(([line, amount]) => {
+            const maxRevenue = Math.max(...Object.values(data.revenueByLine || {}), 1);
             const pct = (amount / maxRevenue) * 100;
             return (
               <div key={line}>
@@ -145,7 +152,7 @@ export default function DashboardPage() {
         <div className="bg-white rounded-xl border border-slate-200 p-5">
           <h2 className="text-sm font-semibold text-slate-900 mb-4">Cash Positions</h2>
           <div className="space-y-3">
-            {data.cashPositions.map((account) => (
+            {(data.cashPositions || []).map((account) => (
               <div key={account.id} className="flex items-center justify-between py-2 border-b border-slate-100 last:border-0">
                 <div>
                   <p className="text-sm font-medium text-slate-900">{account.shortName}</p>
@@ -166,7 +173,7 @@ export default function DashboardPage() {
         <div className="bg-white rounded-xl border border-slate-200 p-5">
           <h2 className="text-sm font-semibold text-slate-900 mb-4">Partner Draws YTD</h2>
           <div className="space-y-3">
-            {data.partnerDrawSummary.map((partner) => (
+            {(data.partnerDrawSummary || []).map((partner) => (
               <div key={partner.partnerId} className="flex items-center justify-between py-2 border-b border-slate-100 last:border-0">
                 <div>
                   <p className="text-sm font-medium text-slate-900">{partner.partnerName}</p>
