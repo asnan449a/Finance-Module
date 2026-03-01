@@ -1,0 +1,42 @@
+{
+  "name": "telerelation-app",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "seed": "npx tsx prisma/seed.ts",
+    "db:push": "npx prisma db push",
+    "db:studio": "npx prisma studio"
+  },
+  "prisma": {
+    "seed": "npx tsx prisma/seed.ts"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.22.0",
+    "bcryptjs": "^3.0.3",
+    "date-fns": "^4.1.0",
+    "next": "14.2.35",
+    "next-auth": "^4.24.13",
+    "prisma": "^5.22.0",
+    "react": "^18",
+    "react-dom": "^18",
+    "recharts": "^3.7.0",
+    "uuid": "^13.0.0"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/node": "^20",
+    "@types/react": "^18",
+    "@types/react-dom": "^18",
+    "@types/uuid": "^10.0.0",
+    "eslint": "^8",
+    "eslint-config-next": "14.2.35",
+    "postcss": "^8",
+    "tailwindcss": "^3.4.1",
+    "tsx": "^4.21.0",
+    "typescript": "^5"
+  }
+}

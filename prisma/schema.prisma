@@ -1,0 +1,302 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Auth & Users ──────────────────────────────────────────────────
+
+model User {
+  id             String    @id @default(uuid())
+  email          String    @unique
+  name           String
+  passwordHash   String
+  role           String    @default("FINANCE_ADMIN") // FINANCE_ADMIN, PARTNER, COO, HR, AUDITOR
+  partnerId      String?
+  partner        Partner?  @relation(fields: [partnerId], references: [id])
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  auditLogs      AuditLog[]
+  transactions   Transaction[] @relation("CreatedByUser")
+}
+
+// ─── Partners ──────────────────────────────────────────────────────
+
+model Partner {
+  id              String    @id @default(uuid())
+  name            String
+  ownershipPct    Float
+  role            String?
+  drawMechanism   String?
+  notes           String?
+  isEmployee      Boolean   @default(false)
+  employeeId      String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  users           User[]
+  drawEntries     PartnerDraw[]
+  capitalEntries  CapitalAccount[]
+  distributions   Distribution[]
+}
+
+model PartnerDraw {
+  id          String    @id @default(uuid())
+  partnerId   String
+  partner     Partner   @relation(fields: [partnerId], references: [id])
+  date        DateTime
+  amount      Float
+  currency    String    @default("USD")
+  amountPkr   Float
+  description String
+  category    String
+  isDraw      Boolean   @default(true)
+  period      String
+  notes       String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model CapitalAccount {
+  id          String    @id @default(uuid())
+  partnerId   String
+  partner     Partner   @relation(fields: [partnerId], references: [id])
+  date        DateTime
+  amount      Float
+  currency    String    @default("PKR")
+  amountPkr   Float
+  description String
+  assetId     String?
+  asset       FixedAsset? @relation(fields: [assetId], references: [id])
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model Distribution {
+  id              String    @id @default(uuid())
+  partnerId       String
+  partner         Partner   @relation(fields: [partnerId], references: [id])
+  period          String
+  grossEntitlement Float
+  ytdAdvances     Float
+  netPayable      Float
+  status          String    @default("CALCULATED")
+  distributionDate DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+// ─── Bank Accounts ─────────────────────────────────────────────────
+
+model BankAccount {
+  id          String    @id @default(uuid())
+  name        String
+  shortName   String
+  currency    String
+  bank        String
+  purpose     String?
+  minFloat    Float?
+  cardHolder  String?
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  transactions Transaction[]
+  balances    AccountBalance[]
+}
+
+model AccountBalance {
+  id          String    @id @default(uuid())
+  accountId   String
+  account     BankAccount @relation(fields: [accountId], references: [id])
+  date        DateTime
+  balance     Float
+  currency    String
+  balancePkr  Float
+  notes       String?
+  createdAt   DateTime  @default(now())
+}
+
+// ─── Transactions ──────────────────────────────────────────────────
+
+model Transaction {
+  id              String    @id @default(uuid())
+  date            DateTime
+  accountId       String
+  account         BankAccount @relation(fields: [accountId], references: [id])
+  amount          Float
+  currency        String
+  amountPkr       Float
+  direction       String
+  description     String
+  lineOfService   String?
+  category        String?
+  clientOrVendor  String?
+  matched         Boolean   @default(false)
+  matchedToId     String?
+  notes           String?
+  status          String    @default("UNCLASSIFIED")
+  createdById     String?
+  createdBy       User?     @relation("CreatedByUser", fields: [createdById], references: [id])
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+// ─── FX Conversions ────────────────────────────────────────────────
+
+model FxConversion {
+  id              String    @id @default(uuid())
+  date            DateTime
+  fromCurrency    String    @default("USD")
+  toCurrency      String    @default("PKR")
+  amountSent      Float
+  wireFee         Float     @default(45)
+  amountReceived  Float
+  impliedRate     Float
+  sbpRate         Float?
+  slippage        Float?
+  isFlagged       Boolean   @default(false)
+  referenceCode   String?
+  notes           String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+// ─── Employees ─────────────────────────────────────────────────────
+
+model Employee {
+  id              String    @id @default(uuid())
+  name            String
+  department      String
+  pkrBaseSalary   Float
+  usdSupplement   Float?
+  bankName        String?
+  bankAccount     String?
+  startDate       DateTime
+  endDate         DateTime?
+  isActive        Boolean   @default(true)
+  notes           String?
+  splitAllocations EmployeeSplitAllocation[]
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+model EmployeeSplitAllocation {
+  id          String    @id @default(uuid())
+  employeeId  String
+  employee    Employee  @relation(fields: [employeeId], references: [id])
+  department  String
+  percentage  Float
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+// ─── Fixed Assets ──────────────────────────────────────────────────
+
+model FixedAsset {
+  id                  String    @id @default(uuid())
+  name                String
+  description         String?
+  assetType           String
+  acquisitionDate     DateTime
+  totalCost           Float
+  currency            String    @default("PKR")
+  landValue           Float?
+  buildingValue       Float?
+  usefulLifeYears     Int?
+  depreciationMethod  String    @default("STRAIGHT_LINE")
+  isCapitalized       Boolean   @default(true)
+  notes               String?
+  capitalContributions CapitalAccount[]
+  additions           AssetAddition[]
+  depreciationEntries DepreciationEntry[]
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+}
+
+model AssetAddition {
+  id          String    @id @default(uuid())
+  assetId     String
+  asset       FixedAsset @relation(fields: [assetId], references: [id])
+  date        DateTime
+  description String
+  amount      Float
+  currency    String    @default("PKR")
+  vendor      String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model DepreciationEntry {
+  id          String    @id @default(uuid())
+  assetId     String
+  asset       FixedAsset @relation(fields: [assetId], references: [id])
+  date        DateTime
+  amount      Float
+  bookValue   Float
+  period      String
+  createdAt   DateTime  @default(now())
+}
+
+// ─── Overhead Allocation ───────────────────────────────────────────
+
+model OverheadCategory {
+  id              String    @id @default(uuid())
+  name            String
+  annualAmountPkr Float
+  allocationBasis String    @default("EQUAL")
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  allocations     OverheadAllocation[]
+}
+
+model OverheadAllocation {
+  id              String    @id @default(uuid())
+  categoryId      String
+  category        OverheadCategory @relation(fields: [categoryId], references: [id])
+  lineOfService   String
+  period          String
+  allocatedAmount Float
+  basis           String
+  basisValue      Float?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+// ─── Company Settings ──────────────────────────────────────────────
+
+model CompanySetting {
+  id    String @id @default(uuid())
+  key   String @unique
+  value String
+  updatedAt DateTime @updatedAt
+}
+
+// ─── Clients ───────────────────────────────────────────────────────
+
+model Client {
+  id              String    @id @default(uuid())
+  name            String
+  lineOfService   String
+  paymentChannel  String?
+  currency        String    @default("USD")
+  billingPattern  String?
+  isActive        Boolean   @default(true)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+// ─── Audit Log ─────────────────────────────────────────────────────
+
+model AuditLog {
+  id          String    @id @default(uuid())
+  userId      String?
+  user        User?     @relation(fields: [userId], references: [id])
+  action      String
+  entityType  String
+  entityId    String
+  oldValue    String?
+  newValue    String?
+  createdAt   DateTime  @default(now())
+}

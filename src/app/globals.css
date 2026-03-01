@@ -1,0 +1,44 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #f8fafc;
+  --foreground: #0f172a;
+}
+
+body {
+  color: var(--foreground);
+  background: var(--background);
+}
+
+/* Scrollbar styling for sidebar and main content */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* Smooth transitions for sidebar sub-menus */
+.sidebar-submenu {
+  overflow: hidden;
+  transition: max-height 0.2s ease-in-out;
+}
+
+/* Focus styles for accessibility */
+@layer utilities {
+  .focus-ring {
+    @apply focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2;
+  }
+}
