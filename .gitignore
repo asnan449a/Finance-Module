@@ -1,0 +1,8 @@
+.env
+node_modules/
+data/finance-db.json
+data/evidence/
+invoices/
+coverage/
+.DS_Store
+*.log
