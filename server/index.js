@@ -63,6 +63,7 @@ import {
 import { listApprovalMatrixVersions, upsertApprovalMatrixVersion } from './services/approval-matrix.js';
 import {
   approveJournal,
+  createAutoPostedJournal,
   createManualJournal,
   getJournalDetail,
   listJournalRegister,
@@ -113,6 +114,14 @@ import {
   findQuickMatchCandidate,
   summarizeBulkEligibility
 } from './services/reconciliation-queue.js';
+import {
+  buildDefaultPkTaxSettings,
+  buildPkTaxReport as buildPkTaxSummary,
+  calculatePkPayrollItem,
+  normalizePkExpenseTax,
+  summarizePkPayrollRun
+} from './services/pk-tax.js';
+import { createOpeningBalanceBatch, listOpeningBalances } from './services/opening-balances.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -880,6 +889,14 @@ function hydrateReimbursementRow(db, row) {
     reimbursementStatus: statuses.has(String(row.reimbursementStatus || '').toUpperCase())
       ? String(row.reimbursementStatus || '').toUpperCase()
       : (String(row.status || '').toUpperCase() === 'PAID' ? 'REIMBURSED' : 'PENDING')
+  };
+}
+
+function hydrateOpeningBalanceRow(db, row) {
+  return {
+    ...row,
+    journalLineage: buildSourceJournalLineage(db, 'OPENING_BALANCE', row.id),
+    accounting: buildSourceAccountingSnapshot(db, 'OPENING_BALANCE', row.id)
   };
 }
 
@@ -3131,6 +3148,7 @@ app.get('/api/settings/finance-model', requireAuth, requireRole(financeReadRoles
       reportingCurrency,
       entityBaseCurrencies,
       fxRatesToUSD,
+      pkTax: db.settings?.pkTax || buildDefaultPkTaxSettings(),
       approvalMatrix: activeApprovalMatrixVersion
         ? {
             rules: activeApprovalMatrixVersion.rules || [],
@@ -3187,6 +3205,45 @@ app.patch('/api/settings/finance-model', requireAuth, requireRole(settingsManage
     db.settings.reportingCurrency = reportingCurrency;
     db.settings.entityBaseCurrencies = nextEntityCurrencies;
     db.settings.fxRatesToUSD = nextFxRates;
+    if (payload.pkTax && typeof payload.pkTax === 'object') {
+      const defaults = buildDefaultPkTaxSettings();
+      const nextPkTax = {
+        ...defaults,
+        ...(db.settings?.pkTax || {}),
+        ...payload.pkTax,
+        deductibilityDefaults: {
+          ...defaults.deductibilityDefaults,
+          ...(db.settings?.pkTax?.deductibilityDefaults || {}),
+          ...(payload.pkTax.deductibilityDefaults || {})
+        },
+        statutoryDeductions: {
+          ...defaults.statutoryDeductions,
+          ...(db.settings?.pkTax?.statutoryDeductions || {}),
+          ...(payload.pkTax.statutoryDeductions || {})
+        },
+        salaryComponents: Array.isArray(payload.pkTax.salaryComponents) && payload.pkTax.salaryComponents.length
+          ? payload.pkTax.salaryComponents
+          : (Array.isArray(db.settings?.pkTax?.salaryComponents) && db.settings.pkTax.salaryComponents.length
+            ? db.settings.pkTax.salaryComponents
+            : defaults.salaryComponents),
+        salaryTaxSlabs: Array.isArray(payload.pkTax.salaryTaxSlabs) && payload.pkTax.salaryTaxSlabs.length
+          ? payload.pkTax.salaryTaxSlabs
+          : (Array.isArray(db.settings?.pkTax?.salaryTaxSlabs) && db.settings.pkTax.salaryTaxSlabs.length
+            ? db.settings.pkTax.salaryTaxSlabs
+            : defaults.salaryTaxSlabs),
+        references: Array.isArray(db.settings?.pkTax?.references) && db.settings.pkTax.references.length
+          ? db.settings.pkTax.references
+          : defaults.references
+      };
+      nextPkTax.entityType = String(nextPkTax.entityType || defaults.entityType).toUpperCase();
+      nextPkTax.payrollEnabled = nextPkTax.payrollEnabled !== false;
+      nextPkTax.payrollFrequency = String(nextPkTax.payrollFrequency || defaults.payrollFrequency).toUpperCase();
+      nextPkTax.withholdingSection = String(nextPkTax.withholdingSection || defaults.withholdingSection);
+      nextPkTax.taxYearLabel = String(nextPkTax.taxYearLabel || defaults.taxYearLabel);
+      nextPkTax.deductibilityDefaults.defaultExpenseTreatment = String(nextPkTax.deductibilityDefaults.defaultExpenseTreatment || defaults.deductibilityDefaults.defaultExpenseTreatment).toUpperCase();
+      nextPkTax.deductibilityDefaults.payrollTreatment = String(nextPkTax.deductibilityDefaults.payrollTreatment || defaults.deductibilityDefaults.payrollTreatment).toUpperCase();
+      db.settings.pkTax = nextPkTax;
+    }
     let approvalMatrixChange = { version: null, changed: false };
     if (payload.approvalMatrix && Array.isArray(payload.approvalMatrix.rules) && payload.approvalMatrix.rules.length) {
       approvalMatrixChange = upsertApprovalMatrixVersion(db, {
@@ -3220,6 +3277,7 @@ app.patch('/api/settings/finance-model', requireAuth, requireRole(settingsManage
         reportingCurrency,
         entityBaseCurrencies: nextEntityCurrencies,
         fxRatesToUSD: nextFxRates,
+        pkTax: db.settings.pkTax,
         approvalMatrixVersionId: approvalMatrixChange.version?.id || db.settings?.activeApprovalMatrixVersionId || null,
         approvalMatrixChanged: Boolean(approvalMatrixChange.changed)
       })
@@ -3232,6 +3290,7 @@ app.patch('/api/settings/finance-model', requireAuth, requireRole(settingsManage
       reportingCurrency,
       entityBaseCurrencies: nextEntityCurrencies,
       fxRatesToUSD: nextFxRates,
+      pkTax: db.settings.pkTax,
       approvalMatrix: activeApprovalMatrixVersion
         ? {
             rules: activeApprovalMatrixVersion.rules || [],
@@ -3245,6 +3304,39 @@ app.patch('/api/settings/finance-model', requireAuth, requireRole(settingsManage
   });
 
   return res.json({ settings: result });
+});
+
+app.get('/api/opening-balances', requireAuth, requireRole(financeReadRoles), (req, res) => {
+  const db = readDb();
+  const rows = listOpeningBalances(db, { entity: req.query.entity || null }).map((row) => hydrateOpeningBalanceRow(db, row));
+  return res.json({ openingBalances: rows });
+});
+
+app.post('/api/opening-balances', requireAuth, requireRole(settingsManageRoles), (req, res) => {
+  const payload = req.body || {};
+  const result = withDb((db) => {
+    try {
+      const row = createOpeningBalanceBatch(db, payload, req.user.sub);
+      appendAudit(db, {
+        actorUserId: req.user.sub,
+        module: 'opening_balances',
+        action: 'opening_balance_batch_created',
+        entityType: 'opening_balance',
+        entityId: row.id,
+        details: JSON.stringify({
+          asOfDate: row.asOfDate,
+          entity: row.entity,
+          currency: row.currency,
+          lineCount: (row.lines || []).length
+        })
+      });
+      return { openingBalance: hydrateOpeningBalanceRow(db, row) };
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : 'Opening balance creation failed.' };
+    }
+  });
+  if (result.error) return res.status(409).json({ error: result.error });
+  return res.status(201).json(result);
 });
 
 app.get('/api/evidence', requireAuth, (req, res) => {
@@ -4468,7 +4560,9 @@ app.post('/api/qbo/pull/full', requireAuth, requireRole(financeManageRoles), asy
       includeInvoices: options.includeInvoices !== false,
       includePayments: options.includePayments !== false,
       includeAccounts: options.includeAccounts !== false,
-      includeTransactions: options.includeTransactions !== false
+      includeTransactions: options.includeTransactions !== false,
+      fromDate: options.fromDate || null,
+      toDate: options.toDate || null
     });
     withDb((db) => {
       syncAllWorkflowPostings(db, req.user.sub);
@@ -4894,6 +4988,10 @@ app.post('/api/expenses', requireAuth, requireRole(financeManageRoles), (req, re
       ? String(payload.reimbursementStatus || 'PENDING').toUpperCase()
       : 'NOT_APPLICABLE';
     const defaultStatus = reimbursementStatus === 'REIMBURSED' ? 'PAID' : (reimbursementNeeded ? 'PENDING_REIMBURSEMENT' : 'PAID');
+    const taxFields = normalizePkExpenseTax({
+      ...payload,
+      amount: payload.amount
+    }, db.settings?.pkTax);
 
     const row = {
       id: nextId(db, 'EXPENSE', 'EXP'),
@@ -4920,6 +5018,10 @@ app.post('/api/expenses', requireAuth, requireRole(financeManageRoles), (req, re
       reimbursementStatus,
       reimbursedAt: reimbursementStatus === 'REIMBURSED' ? (payload.reimbursedAt || payload.date) : null,
       reimbursementAccount: payload.reimbursementAccount || null,
+      taxTreatment: taxFields.taxTreatment,
+      deductiblePercent: taxFields.deductiblePercent,
+      nonDeductibleAmount: taxFields.nonDeductibleAmount,
+      taxNote: taxFields.taxNote,
       source: payload.source || null,
       notes: payload.notes || '',
       approvalStatus: String(payload.approvalStatus || 'PENDING').toUpperCase(),
@@ -4973,7 +5075,7 @@ app.patch('/api/expenses/:expenseId', requireAuth, requireRole(financeManageRole
     const nextDate = payload.date !== undefined ? (payload.date || row.date) : row.date;
     const lockError = periodLockError(db, nextDate);
     if (lockError) return { error: lockError };
-    const approvalSensitiveFields = ['date', 'description', 'account', 'amount', 'currency', 'category', 'businessUnit', 'lineOfService', 'entity', 'channel', 'department', 'partnerTag', 'intercompanyFlag', 'treasuryFlag', 'capexFlag', 'employeeId', 'reimbursementNeeded', 'reimbursementStatus', 'source', 'sourceAccountId'];
+    const approvalSensitiveFields = ['date', 'description', 'account', 'amount', 'currency', 'category', 'businessUnit', 'lineOfService', 'entity', 'channel', 'department', 'partnerTag', 'intercompanyFlag', 'treasuryFlag', 'capexFlag', 'employeeId', 'reimbursementNeeded', 'reimbursementStatus', 'source', 'sourceAccountId', 'taxTreatment', 'deductiblePercent', 'taxNote'];
     const needsReapproval = approvalSensitiveFields.some((field) => Object.prototype.hasOwnProperty.call(payload, field));
 
     if (payload.date !== undefined) row.date = payload.date || row.date;
@@ -5005,6 +5107,9 @@ app.patch('/api/expenses/:expenseId', requireAuth, requireRole(financeManageRole
     if (payload.reimbursementStatus !== undefined) row.reimbursementStatus = String(payload.reimbursementStatus || row.reimbursementStatus || 'PENDING').toUpperCase();
     if (payload.reimbursedAt !== undefined) row.reimbursedAt = payload.reimbursedAt || null;
     if (payload.reimbursementAccount !== undefined) row.reimbursementAccount = payload.reimbursementAccount || null;
+    if (payload.taxTreatment !== undefined) row.taxTreatment = String(payload.taxTreatment || row.taxTreatment || 'DEDUCTIBLE').toUpperCase();
+    if (payload.deductiblePercent !== undefined) row.deductiblePercent = asMoney(payload.deductiblePercent);
+    if (payload.taxNote !== undefined) row.taxNote = payload.taxNote || '';
     if (payload.source !== undefined) row.source = payload.source || null;
     if (payload.notes !== undefined) row.notes = payload.notes || '';
     if (payload.sourceAccountId !== undefined) {
@@ -5025,6 +5130,16 @@ app.patch('/api/expenses/:expenseId', requireAuth, requireRole(financeManageRole
       if (sourceAccountError) return { error: sourceAccountError };
       row.sourceAccountId = nextSourceAccount?.id || null;
     }
+    const normalizedTax = normalizePkExpenseTax({
+      taxTreatment: row.taxTreatment,
+      deductiblePercent: row.deductiblePercent,
+      taxNote: row.taxNote,
+      amount: row.amount
+    }, db.settings?.pkTax);
+    row.taxTreatment = normalizedTax.taxTreatment;
+    row.deductiblePercent = normalizedTax.deductiblePercent;
+    row.nonDeductibleAmount = normalizedTax.nonDeductibleAmount;
+    row.taxNote = normalizedTax.taxNote;
     applyGovernanceStamp(db, row, 'expense');
     if (needsReapproval && String(row.approvalStatus || '').toUpperCase() === 'APPROVED') {
       row.approvalStatus = 'PENDING';
@@ -6398,42 +6513,74 @@ app.post('/api/payroll/runs', requireAuth, requireRole(settingsManageRoles), (re
   const run = withDb((db) => {
     const runId = nextId(db, 'PAYROLL', 'PAYRUN');
     const rows = [];
-    let gross = 0;
-    let deductions = 0;
+    const pkTaxSettings = db.settings?.pkTax || buildDefaultPkTaxSettings();
     for (const item of payload.items) {
       const rowId = nextId(db, 'PAYROLL', 'PAYITEM');
-      const grossPay = asMoney(item.grossPay || 0);
-      const deduction = asMoney(item.deductions || 0);
-      const netPay = asMoney(grossPay - deduction);
       const currency = String(item.currency || 'USD').toUpperCase();
+      const entity = normalizeEntity(item.entity) || normalizeEntity(payload.entity) || normalizeEntity(inferEntityFromCurrency(db, currency)) || 'PK';
+      const computed = entity === 'PK'
+        ? calculatePkPayrollItem(item, pkTaxSettings)
+        : {
+            grossPay: asMoney(item.grossPay || 0),
+            taxablePay: asMoney(item.grossPay || 0),
+            annualizedTaxablePay: asMoney((item.grossPay || 0) * 12),
+            annualTax: 0,
+            withholdingTax: asMoney(item.withholdingTax || 0),
+            otherDeductions: asMoney(item.otherDeductions != null ? item.otherDeductions : item.deductions || 0),
+            totalDeductions: asMoney((item.withholdingTax || 0) + (item.otherDeductions != null ? item.otherDeductions : item.deductions || 0)),
+            netPay: asMoney((item.grossPay || 0) - ((item.withholdingTax || 0) + (item.otherDeductions != null ? item.otherDeductions : item.deductions || 0))),
+            withholdingSection: null,
+            taxYearLabel: null,
+            components: {
+              basicPay: asMoney(item.grossPay || 0),
+              allowances: 0,
+              bonus: 0,
+              overtime: 0,
+              taxableReimbursements: 0,
+              nonTaxableReimbursements: 0
+            }
+          };
       rows.push({
         id: rowId,
         runId,
         userId: item.userId,
-        grossPay,
-        deductions: deduction,
-        netPay,
+        grossPay: computed.grossPay,
+        taxablePay: computed.taxablePay,
+        annualizedTaxablePay: computed.annualizedTaxablePay,
+        annualTax: computed.annualTax,
+        withholdingTax: computed.withholdingTax,
+        otherDeductions: computed.otherDeductions,
+        deductions: computed.totalDeductions,
+        netPay: computed.netPay,
         currency,
-        entity: normalizeEntity(item.entity) || normalizeEntity(inferEntityFromCurrency(db, currency)) || 'PK',
+        entity,
         lineOfService: item.lineOfService ? String(item.lineOfService).toUpperCase() : null,
         businessUnit: item.businessUnit ? String(item.businessUnit).toUpperCase() : 'CORPORATE',
         intercompanyFlag: Boolean(item.intercompanyFlag),
+        components: computed.components,
+        withholdingSection: computed.withholdingSection,
+        taxYearLabel: computed.taxYearLabel,
         createdAt: nowIso(),
         updatedAt: nowIso()
       });
-      gross += grossPay;
-      deductions += deduction;
     }
 
     db.payrollItems.push(...rows);
+    const totals = summarizePkPayrollRun(rows);
     const runRow = {
       id: runId,
       month: payload.month,
       year: payload.year,
+      entity: normalizeEntity(payload.entity) || normalizeEntity(rows[0]?.entity) || 'PK',
+      currency: String(payload.currency || rows[0]?.currency || 'PKR').toUpperCase(),
       status: payload.status || 'PUBLISHED',
-      totalGross: asMoney(gross),
-      totalDeductions: asMoney(deductions),
-      totalNet: asMoney(gross - deductions),
+      totalGross: totals.totalGross,
+      totalTaxablePay: totals.totalTaxablePay,
+      totalWithholdingTax: totals.totalWithholdingTax,
+      totalOtherDeductions: totals.totalOtherDeductions,
+      totalDeductions: totals.totalDeductions,
+      totalNet: totals.totalNet,
+      payrollTaxSettingsVersion: pkTaxSettings.taxYearLabel || null,
       createdByUserId: req.user.sub,
       createdAt: nowIso(),
       updatedAt: nowIso()
@@ -7361,6 +7508,15 @@ app.get('/api/reports/balance-sheet', requireAuth, requireRole([role.ADMIN, role
   }));
 });
 
+app.get('/api/reports/pk-tax', requireAuth, requireRole([role.ADMIN, role.ACCOUNTANT, role.PARTNER, role.VIEWER]), (req, res) => {
+  const db = readDb();
+  return res.json(buildPkTaxSummary(db, {
+    fromDate: req.query.fromDate ? String(req.query.fromDate) : null,
+    toDate: req.query.toDate ? String(req.query.toDate) : null,
+    entity: req.query.entity ? String(req.query.entity) : 'PK'
+  }));
+});
+
 app.get('/api/reports/ar-aging', requireAuth, requireRole([role.ADMIN, role.ACCOUNTANT, role.PARTNER, role.VIEWER]), (req, res) => {
   const db = readDb();
   const buckets = { current: 0, d1_30: 0, d31_60: 0, d61_plus: 0 };
@@ -7478,6 +7634,8 @@ app.get('/api/finance/bootstrap', requireAuth, requireRole(billingReadRoles), (r
     asarTowerCosts: db.asarTowerCosts || [],
     ponchoSettlements: db.ponchoSettlements || [],
     payrollRuns: db.payrollRuns || [],
+    payrollItems: db.payrollItems || [],
+    openingBalances: db.openingBalances || [],
     closePeriods: db.closePeriods || [],
     managementAdjustments: db.managementAdjustments || [],
     qboTransactions: (db.transactions || []).filter((row) => String(row.source || '').toUpperCase().startsWith('QBO')).filter(financeFilter).slice(-1000),

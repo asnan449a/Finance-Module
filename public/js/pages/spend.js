@@ -64,6 +64,7 @@ function expenseRegister(rows) {
             { label: 'Entity' },
             { label: 'Account' },
             { label: 'Category' },
+            { label: 'Tax' },
             { label: 'Approval' },
             { label: 'Evidence' },
             { label: 'Reimbursement' },
@@ -76,6 +77,7 @@ function expenseRegister(rows) {
               <td>${escapeHtml(expense.entity || '—')}</td>
               <td>${escapeHtml(expense.account || expense.sourceAccountName || '—')}</td>
               <td>${escapeHtml(expense.category || 'Unclassified')}</td>
+              <td>${badge(expense.taxTreatment || 'DEDUCTIBLE', String(expense.taxTreatment || '').toUpperCase() === 'NON_DEDUCTIBLE' ? 'warning' : String(expense.taxTreatment || '').toUpperCase() === 'PAYROLL' ? 'neutral' : 'success')}</td>
               <td>${badge(expense.approval?.approvalStatus || expense.approvalStatus || 'PENDING', approvalTone(expense.approval?.approvalStatus || expense.approvalStatus || 'PENDING'))}</td>
               <td>${badge(`${expense.approval?.qualifiedEvidenceCount ?? expense.evidenceRecords?.length ?? 0}/${expense.approval?.minEvidenceCount || 0}`, (expense.approval?.evidenceSatisfied || (expense.evidenceRecords || []).length > 0) ? 'success' : 'warning')}</td>
               <td>${badge(expense.reimbursementStatus || expense.status || 'PAID')}</td>
@@ -192,10 +194,47 @@ function settlementQueue(rows) {
   });
 }
 
+function payrollRegister(runs = []) {
+  return tableCard({
+    title: 'Payroll runs',
+    subtitle: 'Monthly PK payroll runs with withholding tax and net pay summary.',
+    toolbar: `<button class="button button--primary" data-action="open-payroll-run-create">Create payroll run</button>`,
+    table: runs.length
+      ? dataTable({
+          columns: [
+            { label: 'Month' },
+            { label: 'Entity' },
+            { label: 'Gross pay' },
+            { label: 'Withholding tax' },
+            { label: 'Other deductions' },
+            { label: 'Net pay' },
+            { label: 'Employees' }
+          ],
+          rows: runs.map((run) => `
+            <tr>
+              <td><strong>${escapeHtml(`${run.year}-${String(run.month).padStart(2, '0')}`)}</strong><br/><span class="muted-copy">${escapeHtml(run.status || 'PUBLISHED')}</span></td>
+              <td>${escapeHtml(run.entity || 'PK')}</td>
+              <td>${money(run.totalGross || 0, run.currency || 'PKR')}</td>
+              <td>${money(run.totalWithholdingTax || 0, run.currency || 'PKR')}</td>
+              <td>${money(run.totalOtherDeductions || 0, run.currency || 'PKR')}</td>
+              <td>${money(run.totalNet || 0, run.currency || 'PKR')}</td>
+              <td>${escapeHtml(String((run.items || []).length))}</td>
+            </tr>
+          `),
+          empty: 'No payroll runs.'
+        })
+      : emptyState('No payroll runs', 'Create a payroll run to calculate monthly PK withholding tax and payroll expense.', '<button class="button button--primary" data-action="open-payroll-run-create">Create payroll run</button>')
+  });
+}
+
 export function renderSpend(state) {
   const expenses = filteredExpenses(state).sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
   const reimbursements = filteredReimbursements(state).sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
   const summary = state.data.reimbursements?.summary || {};
+  const payrollItems = state.data.bootstrap?.payrollItems || [];
+  const payrollRuns = (state.data.bootstrap?.payrollRuns || [])
+    .map((run) => ({ ...run, items: payrollItems.filter((item) => item.runId === run.id) }))
+    .sort((a, b) => (`${b.year}-${String(b.month).padStart(2, '0')}`).localeCompare(`${a.year}-${String(a.month).padStart(2, '0')}`));
   const tab = state.ui.activeTabs.spend || 'register';
   const pendingApprovals = expenses.filter((expense) => String(expense.approval?.approvalStatus || expense.approvalStatus || '').toUpperCase() === 'PENDING');
   const readyToSettle = reimbursements.filter((expense) => String(expense.reimbursementStatus || '').toUpperCase() === 'PENDING' && String(expense.approval?.approvalStatus || expense.approvalStatus || '').toUpperCase() === 'APPROVED');
@@ -240,7 +279,8 @@ export function renderSpend(state) {
       { value: 'register', label: 'Expense register', count: expenses.length },
       { value: 'approval', label: 'Approval queue', count: pendingApprovals.length },
       { value: 'reimbursements', label: 'Reimbursements', count: reimbursements.length },
-      { value: 'settlements', label: 'Settlement queue', count: readyToSettle.length }
+      { value: 'settlements', label: 'Settlement queue', count: readyToSettle.length },
+      { value: 'payroll', label: 'Payroll', count: payrollRuns.length }
     ]
   });
 
@@ -250,7 +290,9 @@ export function renderSpend(state) {
       ? reimbursementRegister(reimbursements)
       : tab === 'settlements'
         ? settlementQueue(reimbursements)
-        : expenseRegister(expenses);
+        : tab === 'payroll'
+          ? payrollRegister(payrollRuns)
+          : expenseRegister(expenses);
 
   const side = sideStack([
     listCard({
@@ -260,7 +302,8 @@ export function renderSpend(state) {
         insightRow({ title: 'Expenses in scope', meta: 'Current register filters', value: `<span>${expenses.length}</span>` }),
         insightRow({ title: 'Pending approvals', meta: 'Expense items waiting for review', value: `<span>${pendingApprovals.length}</span>`, tone: pendingApprovals.length ? 'warning' : 'success' }),
         insightRow({ title: 'Ready to settle', meta: 'Approved employee claims', value: `<span>${readyToSettle.length}</span>` }),
-        insightRow({ title: 'Pending reimbursement', meta: 'Outstanding employee exposure', value: `<span>${money(summary.pendingAmount || 0, 'PKR')}</span>`, tone: (summary.pendingAmount || 0) > 0 ? 'warning' : 'success' })
+        insightRow({ title: 'Pending reimbursement', meta: 'Outstanding employee exposure', value: `<span>${money(summary.pendingAmount || 0, 'PKR')}</span>`, tone: (summary.pendingAmount || 0) > 0 ? 'warning' : 'success' }),
+        insightRow({ title: 'Payroll tax', meta: 'Current payroll runs', value: `<span>${money(payrollRuns.reduce((sum, run) => sum + Number(run.totalWithholdingTax || 0), 0), 'PKR')}</span>` })
       ]
     }),
     callout({

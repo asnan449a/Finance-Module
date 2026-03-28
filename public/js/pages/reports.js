@@ -395,6 +395,73 @@ function treasuryView(state, reports) {
   return workspaceSplit({ main, side });
 }
 
+function pkTaxView(state, reports) {
+  const report = reports.pkTax || {};
+  const currency = 'PKR';
+  const main = `
+    <div class="workspace-stack">
+      ${tableCard({
+        title: 'Payroll withholding by month',
+        subtitle: 'Monthly PK payroll, taxable pay, and salary withholding tax.',
+        table: (report.payrollByMonth || []).length
+          ? dataTable({
+              columns: [{ label: 'Month' }, { label: 'Employees' }, { label: 'Gross pay' }, { label: 'Taxable pay' }, { label: 'Withholding tax' }, { label: 'Net pay' }],
+              rows: (report.payrollByMonth || []).map((row) => `
+                <tr>
+                  <td><strong>${escapeHtml(row.month)}</strong></td>
+                  <td>${escapeHtml(String(row.employeeCount || 0))}</td>
+                  <td>${money(row.grossPay || 0, currency)}</td>
+                  <td>${money(row.taxablePay || 0, currency)}</td>
+                  <td>${money(row.withholdingTax || 0, currency)}</td>
+                  <td>${money(row.netPay || 0, currency)}</td>
+                </tr>
+              `),
+              empty: 'No payroll tax rows.'
+            })
+          : emptyState('No payroll tax rows', 'Create PK payroll runs to populate monthly withholding tax and payroll expense.')
+      })}
+      ${tableCard({
+        title: 'Non-deductible schedule',
+        subtitle: 'PK expense adjustments for non-deductible and partially deductible items.',
+        table: (report.nonDeductibleSchedule || []).length
+          ? dataTable({
+              columns: [{ label: 'Date' }, { label: 'Description' }, { label: 'Treatment' }, { label: 'Deductible %' }, { label: 'Non-deductible amount' }],
+              rows: (report.nonDeductibleSchedule || []).map((row) => `
+                <tr>
+                  <td>${escapeHtml(row.date || '—')}</td>
+                  <td><strong>${escapeHtml(row.description || row.id)}</strong><br/><span class="muted-copy">${escapeHtml(row.category || 'Operating Expense')}</span></td>
+                  <td>${badge(row.taxTreatment || 'DEDUCTIBLE', row.taxTreatment === 'NON_DEDUCTIBLE' ? 'warning' : row.taxTreatment === 'PAYROLL' ? 'neutral' : 'success')}</td>
+                  <td>${escapeHtml(String(row.deductiblePercent || 0))}%</td>
+                  <td>${money(row.nonDeductibleAmount || 0, currency)}</td>
+                </tr>
+              `),
+              empty: 'No non-deductible adjustments.'
+            })
+          : emptyState('No non-deductible adjustments', 'Mark expenses as non-deductible or partially deductible to build the PK tax adjustment schedule.')
+      })}
+    </div>
+  `;
+
+  const side = sideStack([
+    listCard({
+      title: 'PK tax summary',
+      subtitle: 'Current Pakistan payroll tax and deductibility picture.',
+      items: [
+        insightRow({ title: 'Payroll gross', meta: 'Selected report scope', value: `<span>${money(report.summary?.payrollGross || 0, currency)}</span>` }),
+        insightRow({ title: 'Payroll withholding', meta: 'Salary tax payable', value: `<span>${money(report.summary?.payrollWithholdingTax || 0, currency)}</span>` }),
+        insightRow({ title: 'Non-deductible', meta: 'Expense adjustment total', value: `<span>${money(report.summary?.nonDeductibleExpense || 0, currency)}</span>` })
+      ]
+    }),
+    callout({
+      tone: 'neutral',
+      title: report.settings?.taxYearLabel || 'TY2026',
+      description: `PK payroll withholding is being calculated under section ${report.settings?.withholdingSection || '149'} for a ${report.settings?.entityType || 'PVT_LTD'} setup.`
+    })
+  ]);
+
+  return workspaceSplit({ main, side });
+}
+
 export function renderReports(state) {
   const filters = state.ui.filters.reports;
   const tab = state.ui.activeTabs.reports;
@@ -424,7 +491,8 @@ export function renderReports(state) {
       { value: 'management', label: 'Management' },
       { value: 'working-capital', label: 'Working capital' },
       { value: 'revenue', label: 'Revenue & LOS' },
-      { value: 'treasury', label: 'Treasury & partner' }
+      { value: 'treasury', label: 'Treasury & partner' },
+      { value: 'pk-tax', label: 'PK tax' }
     ]
   });
 
@@ -436,6 +504,8 @@ export function renderReports(state) {
         ? revenueView(state, reports)
         : tab === 'treasury'
           ? treasuryView(state, reports)
+          : tab === 'pk-tax'
+            ? pkTaxView(state, reports)
           : statementsView(state, reports);
 
   return `

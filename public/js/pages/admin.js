@@ -23,6 +23,8 @@ export function renderAdmin(state) {
   const globals = globalAccounts(state);
   const mappings = accountMappings(state);
   const settings = state.data.financeModel?.settings || state.data.bootstrap?.settings || {};
+  const pkTax = settings.pkTax || {};
+  const openingBalances = state.data.bootstrap?.openingBalances || [];
   const approvalMatrixVersions = state.data.financeModel?.approvalMatrixVersions || [];
   const rules = state.data.bootstrap?.classificationRules || [];
   const audit = state.data.admin.audit || [];
@@ -155,6 +157,24 @@ export function renderAdmin(state) {
             </form>
           </div>
         </section>
+        <section class="panel-card">
+          <div class="panel-card__head">
+            <div>
+              <h3>Pakistan tax settings</h3>
+              <p>Payroll withholding and deductibility assumptions for the PK private limited company.</p>
+            </div>
+          </div>
+          <div class="panel-card__body">
+            <form class="form-grid form-grid--three" id="pk-tax-form">
+              <label><span>Entity type</span><input id="pk_tax_entity_type" value="${escapeHtml(pkTax.entityType || 'PVT_LTD')}" /></label>
+              <label><span>Payroll frequency</span><input id="pk_tax_payroll_frequency" value="${escapeHtml(pkTax.payrollFrequency || 'MONTHLY')}" /></label>
+              <label><span>Withholding section</span><input id="pk_tax_withholding_section" value="${escapeHtml(pkTax.withholdingSection || '149')}" /></label>
+              <label><span>Tax year label</span><input id="pk_tax_year_label" value="${escapeHtml(pkTax.taxYearLabel || 'TY2026')}" /></label>
+              <label><span>Default expense treatment</span><input id="pk_tax_default_treatment" value="${escapeHtml(pkTax.deductibilityDefaults?.defaultExpenseTreatment || 'DEDUCTIBLE')}" /></label>
+              <label><span>Payroll treatment</span><input id="pk_tax_payroll_treatment" value="${escapeHtml(pkTax.deductibilityDefaults?.payrollTreatment || 'PAYROLL')}" /></label>
+            </form>
+          </div>
+        </section>
         ${tableCard({
           title: 'Approval matrix',
           subtitle: 'Current workflow approval rules by document type, amount threshold, entity, and evidence requirement.',
@@ -177,6 +197,27 @@ export function renderAdmin(state) {
                 empty: 'No approval rules configured.'
               })
             : emptyState('No approval rules', 'Approval policy rules will appear here once configured.')
+        })}
+        ${tableCard({
+          title: 'Opening balance migrations',
+          subtitle: 'Load December 31, 2025 balances before importing January onward source activity.',
+          toolbar: `<button class="button button--primary" data-action="open-opening-balance-modal">Load opening balances</button>`,
+          table: openingBalances.length
+            ? dataTable({
+                columns: [{ label: 'Batch' }, { label: 'Date' }, { label: 'Entity' }, { label: 'Currency' }, { label: 'Lines' }, { label: 'Journal' }],
+                rows: openingBalances.map((row) => `
+                  <tr>
+                    <td><strong>${escapeHtml(row.batchNumber || row.id)}</strong><br/><span class="muted-copy">${escapeHtml(row.memo || '')}</span></td>
+                    <td>${escapeHtml(shortDate(row.asOfDate))}</td>
+                    <td>${escapeHtml(row.entity || '—')}</td>
+                    <td>${escapeHtml(row.currency || '—')}</td>
+                    <td>${escapeHtml(String(row.lineCount || row.lines?.length || 0))}</td>
+                    <td>${escapeHtml(row.journalLineage?.[0]?.journalNumber || row.journalId || '—')}</td>
+                  </tr>
+                `),
+                empty: 'No opening balance batches.'
+              })
+            : emptyState('No opening balances yet', 'Create an opening balance batch to establish your December 31, 2025 starting position.', '<button class="button button--primary" data-action="open-opening-balance-modal">Load opening balances</button>')
         })}
       </div>
     `;
@@ -204,6 +245,17 @@ export function renderAdmin(state) {
         tone: approvalMatrixVersions.length ? 'neutral' : 'warning',
         title: approvalMatrixVersions.length ? `Active policy version v${approvalMatrixVersions.find((version) => version.isActive)?.versionNumber || approvalMatrixVersions[0]?.versionNumber || 1}` : 'No approval policy history yet',
         description: approvalMatrixVersions.length ? 'Historical approvals remain interpretable because policy snapshots and version history are preserved.' : 'Policy versioning history will appear once finance changes approval rules.'
+      }),
+      listCard({
+        title: 'Pakistan tax references',
+        subtitle: 'Current payroll tax and deductibility assumptions.',
+        items: (pkTax.references || []).map((reference) => insightRow({
+          title: reference.label || 'Reference',
+          meta: reference.source || '',
+          value: `<span>${escapeHtml(pkTax.taxYearLabel || 'TY2026')}</span>`
+        })),
+        emptyTitle: 'No PK tax references',
+        emptyDescription: 'Pakistan tax references will appear here when the PK finance model is configured.'
       })
     ]);
   } else if (tab === 'controls') {
@@ -301,7 +353,7 @@ export function renderAdmin(state) {
           toolbar: `
             <div class="toolbar-group">
               <button class="button button--primary" data-action="connect-qbo">Connect QuickBooks</button>
-              <button class="button button--ghost" data-action="pull-qbo-full">Run full pull</button>
+              <button class="button button--ghost" data-action="open-qbo-pull-modal">Pull date range</button>
             </div>
           `,
           table: dataTable({
@@ -315,6 +367,15 @@ export function renderAdmin(state) {
             ],
             empty: 'No QuickBooks status.'
           })
+        })}
+        ${callout({
+          tone: qbo.lastPullSummary?.options?.fromDate || qbo.lastPullSummary?.options?.toDate ? 'neutral' : 'warning',
+          title: qbo.lastPullSummary?.options?.fromDate || qbo.lastPullSummary?.options?.toDate
+            ? `Last pull scope ${qbo.lastPullSummary?.options?.fromDate || 'Beginning'} to ${qbo.lastPullSummary?.options?.toDate || 'Latest'}`
+            : 'No migration pull scope recorded',
+          description: qbo.lastPullSummary?.options?.fromDate || qbo.lastPullSummary?.options?.toDate
+            ? 'This helps you layer January onward activity on top of a fixed opening balance date.'
+            : 'Use a date-scoped pull once December 31, 2025 opening balances are loaded.'
         })}
         ${tableCard({
           title: 'Readiness and checklist',

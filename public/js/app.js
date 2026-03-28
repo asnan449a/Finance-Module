@@ -1027,11 +1027,15 @@ function expenseDrawer(expense) {
         { label: 'Employee', value: escapeHtml(rowOrDash(expense.employeeId)) },
         { label: 'Reimbursement status', value: escapeHtml(rowOrDash(expense.reimbursementStatus || expense.status)) },
         { label: 'Source account', value: escapeHtml(rowOrDash(expense.sourceAccountName || expense.account)) },
-        { label: 'Global account', value: escapeHtml(expense.globalAccountCode ? `${expense.globalAccountCode} | ${expense.globalAccountName}` : 'UNMAPPED') }
+        { label: 'Global account', value: escapeHtml(expense.globalAccountCode ? `${expense.globalAccountCode} | ${expense.globalAccountName}` : 'UNMAPPED') },
+        { label: 'Tax treatment', value: escapeHtml(rowOrDash(expense.taxTreatment || 'DEDUCTIBLE')) },
+        { label: 'Deductible %', value: escapeHtml(`${expense.deductiblePercent != null ? expense.deductiblePercent : 100}%`) },
+        { label: 'Non-deductible', value: money(expense.nonDeductibleAmount || 0, expense.currency || 'PKR') }
       ]))}
       ${detailSection('Approval', approvalSection(expense.approval))}
       ${detailSection('Evidence', evidenceSection(expense.evidenceRecords, { entityType: 'EXPENSE', entityId: expense.id, control: expense.evidenceControl }))}
       ${detailSection('Accounting', accountingSection(expense.accounting, expense.currency))}
+      ${expense.taxNote ? detailSection('Tax note', `<p class="stack-copy">${escapeHtml(expense.taxNote)}</p>`) : ''}
       ${detailSection('Journal lineage', journalLineageSection(expense.journalLineage))}
       ${expense.notes ? detailSection('Notes', `<p class="stack-copy">${escapeHtml(expense.notes)}</p>`) : ''}
     `,
@@ -1790,6 +1794,7 @@ function openExpenseCreateModal() {
   const rails = cashRailsForBanking(draft.entity, draft.currency);
   const losOptions = financeModel().dimensions?.lineOfService || ['TRDEV', 'TRFINANCE', 'TRBUILD'];
   const buOptions = financeModel().dimensions?.businessUnit || ['SERVICES', 'CORPORATE', 'TREASURY', 'PONCHO', 'TOWER'];
+  const pkDefaults = financeModel().settings?.pkTax?.deductibilityDefaults || {};
   setModal({
     id: 'expense-create',
     eyebrow: 'Spend action',
@@ -1809,11 +1814,79 @@ function openExpenseCreateModal() {
         ${selectField({ id: 'expense_businessUnit', label: 'Business unit', options: selectOptions(buOptions, (row) => row, (row) => row, draft.businessUnit) })}
         ${selectField({ id: 'expense_lineOfService', label: 'Line of service', options: selectOptions(losOptions, (row) => row, (row) => row, draft.lineOfService, 'Optional LOS') })}
         ${selectField({ id: 'expense_employeeId', label: 'Employee / claimant', options: selectOptions(employees, (row) => row.id, (row) => row.name, draft.employeeId, 'No employee claimant') })}
+        ${selectField({ id: 'expense_taxTreatment', label: 'PK tax treatment', options: selectOptions(['DEDUCTIBLE', 'NON_DEDUCTIBLE', 'PARTIALLY_DEDUCTIBLE', 'PAYROLL', 'CAPITAL'], (row) => row, (row) => row.replace(/_/g, ' '), draft.taxTreatment || pkDefaults.defaultExpenseTreatment || 'DEDUCTIBLE') })}
+        ${inputField({ id: 'expense_deductiblePercent', label: 'Deductible %', type: 'number', value: String(draft.deductiblePercent || 100), min: 0, max: 100, step: '0.01' })}
         ${checkboxField({ id: 'expense_reimbursementNeeded', label: 'Reimbursement needed', checked: Boolean(draft.reimbursementNeeded), hint: 'Use this for employee-paid expenses that must be settled later.' })}
+        ${inputField({ id: 'expense_taxNote', label: 'Tax note', value: draft.taxNote || '', placeholder: 'Optional note for non-deductible or payroll treatment' })}
         ${textAreaField({ id: 'expense_notes', label: 'Notes', value: draft.notes, placeholder: 'Optional finance notes' })}
       </form>
     `,
     footer: formActions('expense-create-form', 'Record expense')
+  });
+}
+
+function openQboPullModal() {
+  const draft = state.drafts.qboPull;
+  setModal({
+    id: 'qbo-pull',
+    eyebrow: 'Source migration',
+    title: 'Run date-scoped QuickBooks pull',
+    subtitle: 'Limit the pull window so you can load opening balances first, then bring only January onward activity into the ERP.',
+    body: `
+      <form id="qbo-pull-form" class="form-grid form-grid--three">
+        ${inputField({ id: 'qbo_pull_fromDate', label: 'From date', type: 'date', value: draft.fromDate || '' })}
+        ${inputField({ id: 'qbo_pull_toDate', label: 'To date', type: 'date', value: draft.toDate || '' })}
+        ${checkboxField({ id: 'qbo_pull_includeCustomers', label: 'Include customers', checked: draft.includeCustomers !== false })}
+        ${checkboxField({ id: 'qbo_pull_includeInvoices', label: 'Include invoices', checked: draft.includeInvoices !== false })}
+        ${checkboxField({ id: 'qbo_pull_includePayments', label: 'Include payments', checked: draft.includePayments !== false })}
+        ${checkboxField({ id: 'qbo_pull_includeAccounts', label: 'Include accounts', checked: draft.includeAccounts !== false })}
+        ${checkboxField({ id: 'qbo_pull_includeTransactions', label: 'Include transactions', checked: draft.includeTransactions !== false })}
+      </form>
+    `,
+    footer: formActions('qbo-pull-form', 'Run scoped pull')
+  });
+}
+
+function openOpeningBalanceModal() {
+  const draft = state.drafts.openingBalance;
+  setModal({
+    id: 'opening-balance',
+    eyebrow: 'Migration setup',
+    title: 'Load opening balances',
+    subtitle: 'Record chart-of-account balances as of December 31, 2025 or another cut-off date. These opening entries will post into the journal layer.',
+    size: 'wide',
+    body: `
+      <form id="opening-balance-form" class="form-grid form-grid--three">
+        ${inputField({ id: 'opening_balance_date', label: 'As of date', type: 'date', value: draft.asOfDate, required: true })}
+        ${selectField({ id: 'opening_balance_entity', label: 'Entity', options: selectOptions(entityOptions(state), (row) => row, (row) => row, draft.entity) })}
+        ${selectField({ id: 'opening_balance_currency', label: 'Currency', options: selectOptions(['USD', 'GBP', 'PKR'], (row) => row, (row) => row, draft.currency) })}
+        ${inputField({ id: 'opening_balance_memo', label: 'Memo', value: draft.memo, required: true })}
+        ${textAreaField({ id: 'opening_balance_notes', label: 'Notes', value: draft.notes || '', placeholder: 'Optional migration note' })}
+        ${textAreaField({ id: 'opening_balance_csv', label: 'Opening balance lines', value: draft.csv || '', placeholder: 'accountCode,side,amount,description', hint: 'Format: accountCode, side (DEBIT/CREDIT), amount, description. Lines must net to zero.' })}
+      </form>
+    `,
+    footer: formActions('opening-balance-form', 'Create opening balance batch')
+  });
+}
+
+function openPayrollRunCreateModal() {
+  const draft = state.drafts.payrollRun;
+  setModal({
+    id: 'payroll-run-create',
+    eyebrow: 'Payroll action',
+    title: 'Create payroll run',
+    subtitle: 'Create a monthly payroll run for PK employees. Salary withholding tax is calculated under the PK tax settings in the finance model.',
+    size: 'wide',
+    body: `
+      <form id="payroll-run-create-form" class="form-grid form-grid--three">
+        ${inputField({ id: 'payroll_run_month', label: 'Month', type: 'number', value: draft.month, min: 1, max: 12, required: true })}
+        ${inputField({ id: 'payroll_run_year', label: 'Year', type: 'number', value: draft.year, min: 2020, max: 2100, required: true })}
+        ${selectField({ id: 'payroll_run_entity', label: 'Entity', options: selectOptions(entityOptions(state), (row) => row, (row) => row, draft.entity) })}
+        ${selectField({ id: 'payroll_run_currency', label: 'Currency', options: selectOptions(['PKR', 'USD', 'GBP'], (row) => row, (row) => row, draft.currency) })}
+        ${textAreaField({ id: 'payroll_run_csv', label: 'Payroll rows', value: draft.csv || '', placeholder: 'userId,basicPay,allowances,bonus,overtime,taxableReimbursements,nonTaxableReimbursements,otherDeductions,currency', hint: 'One employee per line. Use PKR for PK payroll unless you intentionally need another currency.' })}
+      </form>
+    `,
+    footer: formActions('payroll-run-create-form', 'Create payroll run')
   });
 }
 
@@ -2127,6 +2200,9 @@ function openModalByAction(action, id = null, context = {}) {
   if (action === 'open-intercompany-create') return openIntercompanyCreateModal();
   if (action === 'open-intercompany-settle' || action === 'open-intercompany-repay') return openIntercompanyRepayModal(id);
   if (action === 'open-expense-create') return openExpenseCreateModal();
+  if (action === 'open-payroll-run-create') return openPayrollRunCreateModal();
+  if (action === 'open-qbo-pull-modal') return openQboPullModal();
+  if (action === 'open-opening-balance-modal') return openOpeningBalanceModal();
   if (action === 'open-expense-reject') return openExpenseRejectModal(id);
   if (action === 'open-reimbursement-settle') return openReimbursementSettleModal(id);
   if (action === 'open-evidence-upload') return openEvidenceUploadModal(context.entityType, context.entityId || id);
@@ -2153,6 +2229,16 @@ function checkboxValue(form, id) {
 function numberValue(form, id) {
   const value = Number(form.querySelector(`#${id}`)?.value);
   return Number.isFinite(value) ? value : 0;
+}
+
+function parseCsvText(raw) {
+  const lines = String(raw || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  if (lines.length < 2) return [];
+  const headers = lines[0].split(',').map((value) => value.trim());
+  return lines.slice(1).map((line) => {
+    const cols = line.split(',').map((value) => value.trim());
+    return Object.fromEntries(headers.map((header, index) => [header, cols[index] || '']));
+  });
 }
 
 async function submitInvoiceCreate(form) {
@@ -2399,12 +2485,89 @@ async function submitExpenseCreate(form) {
       businessUnit: values.expense_businessUnit,
       lineOfService: values.expense_lineOfService || null,
       employeeId: values.expense_employeeId || null,
+      taxTreatment: values.expense_taxTreatment || null,
+      deductiblePercent: Number(values.expense_deductiblePercent || 100),
+      taxNote: values.expense_taxNote || '',
       reimbursementNeeded: checkboxValue(form, 'expense_reimbursementNeeded'),
       notes: values.expense_notes || ''
     }
   });
   closeModal();
   await refreshCurrentWorkspace({ notice: 'Expense recorded.', reopenDrawerRef: `expense:${response.expense.id}` });
+}
+
+async function submitQboPull(form) {
+  const values = formValues(form);
+  await request('/api/qbo/pull/full', {
+    method: 'POST',
+    body: {
+      options: {
+        fromDate: values.qbo_pull_fromDate || null,
+        toDate: values.qbo_pull_toDate || null,
+        includeCustomers: checkboxValue(form, 'qbo_pull_includeCustomers'),
+        includeInvoices: checkboxValue(form, 'qbo_pull_includeInvoices'),
+        includePayments: checkboxValue(form, 'qbo_pull_includePayments'),
+        includeAccounts: checkboxValue(form, 'qbo_pull_includeAccounts'),
+        includeTransactions: checkboxValue(form, 'qbo_pull_includeTransactions')
+      }
+    }
+  });
+  closeModal();
+  await refreshCurrentWorkspace({ notice: 'Scoped QuickBooks pull completed.' });
+}
+
+async function submitOpeningBalance(form) {
+  const values = formValues(form);
+  const rows = parseCsvText(values.opening_balance_csv || '').map((row) => ({
+    globalAccountCode: row.accountCode || row.globalAccountCode || row.code,
+    side: row.side,
+    amount: Number(row.amount || 0),
+    description: row.description || '',
+    reference: row.reference || ''
+  }));
+  if (!rows.length) throw new Error('Enter at least one opening balance line.');
+  const response = await request('/api/opening-balances', {
+    method: 'POST',
+    body: {
+      asOfDate: values.opening_balance_date,
+      entity: values.opening_balance_entity,
+      currency: values.opening_balance_currency,
+      memo: values.opening_balance_memo,
+      notes: values.opening_balance_notes || '',
+      lines: rows
+    }
+  });
+  closeModal();
+  await refreshCurrentWorkspace({ notice: 'Opening balance batch created.', reopenDrawerRef: `journal:${response.openingBalance.journalLineage?.[0]?.id || response.openingBalance.journalId}` });
+}
+
+async function submitPayrollRunCreate(form) {
+  const values = formValues(form);
+  const rows = parseCsvText(values.payroll_run_csv || '').map((row) => ({
+    userId: row.userId || null,
+    basicPay: Number(row.basicPay || 0),
+    allowances: Number(row.allowances || 0),
+    bonus: Number(row.bonus || 0),
+    overtime: Number(row.overtime || 0),
+    taxableReimbursements: Number(row.taxableReimbursements || 0),
+    nonTaxableReimbursements: Number(row.nonTaxableReimbursements || 0),
+    otherDeductions: Number(row.otherDeductions || 0),
+    currency: row.currency || values.payroll_run_currency || 'PKR',
+    entity: values.payroll_run_entity || 'PK'
+  }));
+  if (!rows.length) throw new Error('Enter at least one payroll row.');
+  await request('/api/payroll/runs', {
+    method: 'POST',
+    body: {
+      month: Number(values.payroll_run_month),
+      year: Number(values.payroll_run_year),
+      entity: values.payroll_run_entity || 'PK',
+      currency: values.payroll_run_currency || 'PKR',
+      items: rows
+    }
+  });
+  closeModal();
+  await refreshCurrentWorkspace({ notice: 'Payroll run created.' });
 }
 
 async function submitExpenseReject(form) {
@@ -2654,6 +2817,9 @@ async function handleFormSubmit(form) {
   if (form.id === 'intercompany-create-form') return submitIntercompanyCreate(form);
   if (form.id === 'intercompany-repay-form') return submitIntercompanyRepay(form);
   if (form.id === 'expense-create-form') return submitExpenseCreate(form);
+  if (form.id === 'qbo-pull-form') return submitQboPull(form);
+  if (form.id === 'opening-balance-form') return submitOpeningBalance(form);
+  if (form.id === 'payroll-run-create-form') return submitPayrollRunCreate(form);
   if (form.id === 'expense-reject-form') return submitExpenseReject(form);
   if (form.id === 'reimbursement-settle-form') return submitReimbursementSettle(form);
   if (form.id === 'evidence-upload-form') return submitEvidenceUpload(form);
@@ -2836,6 +3002,16 @@ async function applyImmediateAction(action, id = null, context = {}) {
         USD: Number(form.querySelector('#admin_fx_USD')?.value || 1),
         GBP: Number(form.querySelector('#admin_fx_GBP')?.value || 1.27),
         PKR: Number(form.querySelector('#admin_fx_PKR')?.value || 0.0036)
+      },
+      pkTax: {
+        entityType: root.querySelector('#pk_tax_entity_type')?.value || 'PVT_LTD',
+        payrollFrequency: root.querySelector('#pk_tax_payroll_frequency')?.value || 'MONTHLY',
+        withholdingSection: root.querySelector('#pk_tax_withholding_section')?.value || '149',
+        taxYearLabel: root.querySelector('#pk_tax_year_label')?.value || 'TY2026',
+        deductibilityDefaults: {
+          defaultExpenseTreatment: root.querySelector('#pk_tax_default_treatment')?.value || 'DEDUCTIBLE',
+          payrollTreatment: root.querySelector('#pk_tax_payroll_treatment')?.value || 'PAYROLL'
+        }
       },
       approvalMatrix: state.data.financeModel?.settings?.approvalMatrix || state.data.bootstrap?.settings?.approvalMatrix || null
     };

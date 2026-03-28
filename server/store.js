@@ -3,6 +3,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import bcrypt from 'bcryptjs';
+import { buildDefaultPkTaxSettings } from './services/pk-tax.js';
 import {
   ensurePostgresReady,
   hydrateMigratedDomainsFromPostgres,
@@ -286,9 +287,13 @@ function buildDefaultGlobalChartAccounts() {
     { id: 'GLA-4', code: '1200', name: 'Due from Related Parties', type: 'ASSET', reportingGroup: 'Related Party', status: 'ACTIVE', createdAt: nowIso(), updatedAt: nowIso() },
     { id: 'GLA-5', code: '1500', name: 'Capital Projects / Tower', type: 'ASSET', reportingGroup: 'Capex', status: 'ACTIVE', createdAt: nowIso(), updatedAt: nowIso() },
     { id: 'GLA-6', code: '2000', name: 'Accounts Payable', type: 'LIABILITY', reportingGroup: 'Working Capital', status: 'ACTIVE', createdAt: nowIso(), updatedAt: nowIso() },
+    { id: 'GLA-16', code: '2010', name: 'Payroll Payable', type: 'LIABILITY', reportingGroup: 'Payroll', status: 'ACTIVE', createdAt: nowIso(), updatedAt: nowIso() },
+    { id: 'GLA-17', code: '2020', name: 'Withholding Tax Payable', type: 'LIABILITY', reportingGroup: 'Tax', status: 'ACTIVE', createdAt: nowIso(), updatedAt: nowIso() },
+    { id: 'GLA-18', code: '2030', name: 'Other Payroll Deductions Payable', type: 'LIABILITY', reportingGroup: 'Payroll', status: 'ACTIVE', createdAt: nowIso(), updatedAt: nowIso() },
     { id: 'GLA-7', code: '2100', name: 'Credit Cards and Card Payables', type: 'LIABILITY', reportingGroup: 'Treasury', status: 'ACTIVE', createdAt: nowIso(), updatedAt: nowIso() },
     { id: 'GLA-15', code: '2200', name: 'Due to Related Parties', type: 'LIABILITY', reportingGroup: 'Related Party', status: 'ACTIVE', createdAt: nowIso(), updatedAt: nowIso() },
     { id: 'GLA-8', code: '3000', name: 'Partner Capital and Drawings', type: 'EQUITY', reportingGroup: 'Equity', status: 'ACTIVE', createdAt: nowIso(), updatedAt: nowIso() },
+    { id: 'GLA-19', code: '3900', name: 'Opening Balance Equity', type: 'EQUITY', reportingGroup: 'Equity', status: 'ACTIVE', createdAt: nowIso(), updatedAt: nowIso() },
     { id: 'GLA-9', code: '4000', name: 'Services Revenue', type: 'INCOME', reportingGroup: 'Revenue', status: 'ACTIVE', createdAt: nowIso(), updatedAt: nowIso() },
     { id: 'GLA-10', code: '4100', name: 'Product / App Revenue', type: 'INCOME', reportingGroup: 'Revenue', status: 'ACTIVE', createdAt: nowIso(), updatedAt: nowIso() },
     { id: 'GLA-11', code: '5000', name: 'Operating Expense', type: 'EXPENSE', reportingGroup: 'Operating Expense', status: 'ACTIVE', createdAt: nowIso(), updatedAt: nowIso() },
@@ -1615,6 +1620,8 @@ function createSeedDb() {
       MGMT_ADJUSTMENT: 100,
       INTERCOMPANY: 100,
       INTERCOMPANY_REPAYMENT: 100,
+      OPENING_BALANCE: 100,
+      OPENING_BALANCE_LINE: 100,
       CLOSE_PERIOD: 100,
       JOURNAL: 100,
       JOURNAL_NUMBER: 100,
@@ -1646,7 +1653,8 @@ function createSeedDb() {
       qboPollingEnabled: true
       ,
       approvalMatrix: buildDefaultApprovalMatrix(),
-      activeApprovalMatrixVersionId: 'AMV-0001'
+      activeApprovalMatrixVersionId: 'AMV-0001',
+      pkTax: buildDefaultPkTaxSettings()
     },
     users,
     clients,
@@ -1723,6 +1731,7 @@ function createSeedDb() {
     journals: [],
     payrollRuns: [],
     payrollItems: [],
+    openingBalances: [],
     ponchoSettlements: [],
     closePeriods: [],
     approvalMatrixVersions: buildSeedApprovalMatrixVersions(),
@@ -1779,6 +1788,8 @@ function ensureShape(db) {
     MGMT_ADJUSTMENT: 100,
     INTERCOMPANY: 100,
     INTERCOMPANY_REPAYMENT: 100,
+    OPENING_BALANCE: 100,
+    OPENING_BALANCE_LINE: 100,
     CLOSE_PERIOD: 100,
     JOURNAL: 100,
     JOURNAL_NUMBER: 100,
@@ -1823,6 +1834,7 @@ function ensureShape(db) {
     journals: [],
     payrollRuns: [],
     payrollItems: [],
+    openingBalances: [],
     ponchoSettlements: [],
     closePeriods: [],
     approvalMatrixVersions: buildSeedApprovalMatrixVersions(),
@@ -1853,7 +1865,8 @@ function ensureShape(db) {
       invoiceEmailEnabled: true,
       qboPollingEnabled: true,
       approvalMatrix: buildDefaultApprovalMatrix(),
-      activeApprovalMatrixVersionId: 'AMV-0001'
+      activeApprovalMatrixVersionId: 'AMV-0001',
+      pkTax: buildDefaultPkTaxSettings()
     };
   }
   if (!db.settings.entityBaseCurrencies || typeof db.settings.entityBaseCurrencies !== 'object') {
@@ -1875,6 +1888,32 @@ function ensureShape(db) {
   }
   if (!db.settings.activeApprovalMatrixVersionId) {
     db.settings.activeApprovalMatrixVersionId = db.approvalMatrixVersions[0]?.id || 'AMV-0001';
+  }
+  if (!db.settings.pkTax || typeof db.settings.pkTax !== 'object') {
+    db.settings.pkTax = buildDefaultPkTaxSettings();
+  } else {
+    const defaults = buildDefaultPkTaxSettings();
+    db.settings.pkTax = {
+      ...defaults,
+      ...db.settings.pkTax,
+      deductibilityDefaults: {
+        ...defaults.deductibilityDefaults,
+        ...(db.settings.pkTax.deductibilityDefaults || {})
+      },
+      statutoryDeductions: {
+        ...defaults.statutoryDeductions,
+        ...(db.settings.pkTax.statutoryDeductions || {})
+      },
+      salaryComponents: Array.isArray(db.settings.pkTax.salaryComponents) && db.settings.pkTax.salaryComponents.length
+        ? db.settings.pkTax.salaryComponents
+        : defaults.salaryComponents,
+      salaryTaxSlabs: Array.isArray(db.settings.pkTax.salaryTaxSlabs) && db.settings.pkTax.salaryTaxSlabs.length
+        ? db.settings.pkTax.salaryTaxSlabs
+        : defaults.salaryTaxSlabs,
+      references: Array.isArray(db.settings.pkTax.references) && db.settings.pkTax.references.length
+        ? db.settings.pkTax.references
+        : defaults.references
+    };
   }
   const defaultFxRatesToUsd = buildDefaultFxRatesToUsd();
   for (const [currency, rate] of Object.entries(defaultFxRatesToUsd)) {

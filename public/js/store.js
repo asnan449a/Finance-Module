@@ -88,7 +88,8 @@ export const state = {
       managementTreasury: null,
       managementUpwork: null,
       managementPartner: null,
-      qboRevenueByLos: null
+      qboRevenueByLos: null,
+      pkTax: null
     },
     admin: {
       audit: [],
@@ -162,6 +163,30 @@ export const state = {
       currency: 'USD',
       journalType: 'MANUAL',
       memo: ''
+    },
+    qboPull: {
+      fromDate: '',
+      toDate: '',
+      includeCustomers: true,
+      includeInvoices: true,
+      includePayments: true,
+      includeAccounts: true,
+      includeTransactions: true
+    },
+    openingBalance: {
+      asOfDate: '2025-12-31',
+      entity: 'PK',
+      currency: 'PKR',
+      memo: 'Opening balances as of 2025-12-31',
+      notes: '',
+      csv: 'accountCode,side,amount,description\n1000,DEBIT,0,Cash opening balance\n2010,CREDIT,0,Payroll payable opening balance'
+    },
+    payrollRun: {
+      month: String(new Date().getMonth() + 1).padStart(2, '0'),
+      year: String(new Date().getFullYear()),
+      entity: 'PK',
+      currency: 'PKR',
+      csv: 'userId,basicPay,allowances,bonus,overtime,taxableReimbursements,nonTaxableReimbursements,otherDeductions,currency\nUSR-2,250000,25000,0,0,0,0,0,PKR'
     },
     bankImport: {
       rail: 'ALL',

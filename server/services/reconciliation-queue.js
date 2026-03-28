@@ -311,9 +311,7 @@ function supportSnapshot(tx) {
 
 function isDeferredActive(item) {
   if (String(item.reconciliationReviewStatus || '').toUpperCase() !== 'DEFERRED') return false;
-  if (!item.deferredUntil) return true;
-  const days = daysUntil(item.deferredUntil);
-  return days == null ? true : days >= 0;
+  return true;
 }
 
 function reviewStateFor(item) {

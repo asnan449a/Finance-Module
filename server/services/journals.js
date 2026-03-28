@@ -759,11 +759,26 @@ function asarCostJournalSpec(db, cost) {
 
 function payrollRunJournalSpec(db, run, items) {
   if (!run) return null;
-  const amount = asMoney(run.totalNet || 0);
-  if (amount <= 0) return null;
+  const grossAmount = asMoney(run.totalGross || run.totalNet || 0);
+  if (grossAmount <= 0) return null;
   const currency = normalizeCurrency(items?.[0]?.currency || db.settings?.reportingCurrency || 'USD');
   const entity = normalizeEntity(items?.[0]?.entity) || inferEntityFromCurrency(db, currency) || 'PK';
   const postingDate = `${run.year}-${String(run.month).padStart(2, '0')}-01`;
+  const withholdingTax = asMoney(run.totalWithholdingTax || 0);
+  const otherDeductions = asMoney(run.totalOtherDeductions || 0);
+  const netPay = asMoney(run.totalNet || Math.max(grossAmount - withholdingTax - otherDeductions, 0));
+  const lines = [
+    buildLineFromCode(db, { code: '5100', debit: grossAmount, description: `Payroll ${run.month}/${run.year}`, entity, currency })
+  ];
+  if (netPay > 0) {
+    lines.push(buildLineFromCode(db, { code: '2010', credit: netPay, description: `Payroll payable ${run.month}/${run.year}`, entity, currency }));
+  }
+  if (withholdingTax > 0) {
+    lines.push(buildLineFromCode(db, { code: '2020', credit: withholdingTax, description: `Salary withholding tax ${run.month}/${run.year}`, entity, currency }));
+  }
+  if (otherDeductions > 0) {
+    lines.push(buildLineFromCode(db, { code: '2030', credit: otherDeductions, description: `Other payroll deductions ${run.month}/${run.year}`, entity, currency }));
+  }
   return {
     sourceType: 'PAYROLL_RUN',
     sourceId: run.id,
@@ -778,10 +793,7 @@ function payrollRunJournalSpec(db, run, items) {
     createdByUserId: run.createdByUserId || null,
     approvedByUserId: run.createdByUserId || null,
     postedByUserId: run.createdByUserId || null,
-    lines: finalizeSystemLines([
-      buildLineFromCode(db, { code: '5100', debit: amount, description: `Payroll ${run.month}/${run.year}`, entity, currency }),
-      buildLineFromCode(db, { code: '2000', credit: amount, description: `Payroll payable ${run.month}/${run.year}`, entity, currency })
-    ])
+    lines: finalizeSystemLines(lines)
   };
 }
 

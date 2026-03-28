@@ -642,6 +642,13 @@ async function qboQueryAll({ realmId, accessToken, entity, queryWhere = '' }) {
   return rows;
 }
 
+function qboTxnDateWhere({ fromDate = null, toDate = null } = {}) {
+  const clauses = [];
+  if (toDateKey(fromDate)) clauses.push(`TxnDate >= '${toDateKey(fromDate)}'`);
+  if (toDateKey(toDate)) clauses.push(`TxnDate <= '${toDateKey(toDate)}'`);
+  return clauses.join(' and ');
+}
+
 export async function pullFullQboData(
   actorUserId = null,
   {
@@ -649,7 +656,9 @@ export async function pullFullQboData(
     includeInvoices = true,
     includePayments = true,
     includeAccounts = true,
-    includeTransactions = true
+    includeTransactions = true,
+    fromDate = null,
+    toDate = null
   } = {}
 ) {
   const db = readDb();
@@ -660,6 +669,7 @@ export async function pullFullQboData(
   const accessToken = await ensureAccessToken(db);
   const realmId = db.qbo.realmId;
   const errors = [];
+  const txnWhere = qboTxnDateWhere({ fromDate, toDate });
 
   const safelyPull = async (label, fn) => {
     try {
@@ -675,17 +685,17 @@ export async function pullFullQboData(
 
   const customers = includeCustomers ? await safelyPull('Customer', () => qboQueryAll({ realmId, accessToken, entity: 'Customer' })) : [];
   const accounts = includeAccounts ? await safelyPull('Account', () => qboQueryAll({ realmId, accessToken, entity: 'Account' })) : [];
-  const invoices = includeInvoices ? await safelyPull('Invoice', () => qboQueryAll({ realmId, accessToken, entity: 'Invoice' })) : [];
-  const payments = includePayments ? await safelyPull('Payment', () => qboQueryAll({ realmId, accessToken, entity: 'Payment' })) : [];
-  const journalEntries = includeTransactions ? await safelyPull('JournalEntry', () => qboQueryAll({ realmId, accessToken, entity: 'JournalEntry' })) : [];
-  const purchases = includeTransactions ? await safelyPull('Purchase', () => qboQueryAll({ realmId, accessToken, entity: 'Purchase' })) : [];
-  const bills = includeTransactions ? await safelyPull('Bill', () => qboQueryAll({ realmId, accessToken, entity: 'Bill' })) : [];
-  const billPayments = includeTransactions ? await safelyPull('BillPayment', () => qboQueryAll({ realmId, accessToken, entity: 'BillPayment' })) : [];
-  const deposits = includeTransactions ? await safelyPull('Deposit', () => qboQueryAll({ realmId, accessToken, entity: 'Deposit' })) : [];
-  const transfers = includeTransactions ? await safelyPull('Transfer', () => qboQueryAll({ realmId, accessToken, entity: 'Transfer' })) : [];
-  const salesReceipts = includeTransactions ? await safelyPull('SalesReceipt', () => qboQueryAll({ realmId, accessToken, entity: 'SalesReceipt' })) : [];
-  const vendorCredits = includeTransactions ? await safelyPull('VendorCredit', () => qboQueryAll({ realmId, accessToken, entity: 'VendorCredit' })) : [];
-  const creditCardPayments = includeTransactions ? await safelyPull('CreditCardPayment', () => qboQueryAll({ realmId, accessToken, entity: 'CreditCardPayment' })) : [];
+  const invoices = includeInvoices ? await safelyPull('Invoice', () => qboQueryAll({ realmId, accessToken, entity: 'Invoice', queryWhere: txnWhere })) : [];
+  const payments = includePayments ? await safelyPull('Payment', () => qboQueryAll({ realmId, accessToken, entity: 'Payment', queryWhere: txnWhere })) : [];
+  const journalEntries = includeTransactions ? await safelyPull('JournalEntry', () => qboQueryAll({ realmId, accessToken, entity: 'JournalEntry', queryWhere: txnWhere })) : [];
+  const purchases = includeTransactions ? await safelyPull('Purchase', () => qboQueryAll({ realmId, accessToken, entity: 'Purchase', queryWhere: txnWhere })) : [];
+  const bills = includeTransactions ? await safelyPull('Bill', () => qboQueryAll({ realmId, accessToken, entity: 'Bill', queryWhere: txnWhere })) : [];
+  const billPayments = includeTransactions ? await safelyPull('BillPayment', () => qboQueryAll({ realmId, accessToken, entity: 'BillPayment', queryWhere: txnWhere })) : [];
+  const deposits = includeTransactions ? await safelyPull('Deposit', () => qboQueryAll({ realmId, accessToken, entity: 'Deposit', queryWhere: txnWhere })) : [];
+  const transfers = includeTransactions ? await safelyPull('Transfer', () => qboQueryAll({ realmId, accessToken, entity: 'Transfer', queryWhere: txnWhere })) : [];
+  const salesReceipts = includeTransactions ? await safelyPull('SalesReceipt', () => qboQueryAll({ realmId, accessToken, entity: 'SalesReceipt', queryWhere: txnWhere })) : [];
+  const vendorCredits = includeTransactions ? await safelyPull('VendorCredit', () => qboQueryAll({ realmId, accessToken, entity: 'VendorCredit', queryWhere: txnWhere })) : [];
+  const creditCardPayments = includeTransactions ? await safelyPull('CreditCardPayment', () => qboQueryAll({ realmId, accessToken, entity: 'CreditCardPayment', queryWhere: txnWhere })) : [];
 
   const accountByQboId = new Map(accounts.map((row) => [String(row.Id), row]));
 
@@ -695,7 +705,7 @@ export async function pullFullQboData(
       pulledAt: now,
       realmId,
       environment: QBO_ENVIRONMENT,
-      options: { includeCustomers, includeInvoices, includePayments, includeAccounts, includeTransactions },
+      options: { includeCustomers, includeInvoices, includePayments, includeAccounts, includeTransactions, fromDate: toDateKey(fromDate), toDate: toDateKey(toDate) },
       customers: { fetched: customers.length, upserted: 0 },
       accounts: { fetched: accounts.length, upserted: 0 },
       invoices: { fetched: invoices.length, upserted: 0 },

@@ -120,6 +120,10 @@ async function loadAccountingIntegrity() {
 async function loadReports() {
   const query = reportQuery();
   const q = query ? `?${query}` : '';
+  const pkTaxParams = new URLSearchParams();
+  if (state.ui.filters.reports.fromDate) pkTaxParams.set('fromDate', state.ui.filters.reports.fromDate);
+  if (state.ui.filters.reports.toDate) pkTaxParams.set('toDate', state.ui.filters.reports.toDate);
+  pkTaxParams.set('entity', state.ui.filters.reports.entity || 'PK');
   const [
     statutoryPl,
     statutoryCashFlow,
@@ -131,7 +135,8 @@ async function loadReports() {
     managementTreasury,
     managementUpwork,
     managementPartner,
-    qboRevenueByLos
+    qboRevenueByLos,
+    pkTax
   ] = await Promise.all([
     request(`/api/reports/pl${q}`),
     request(`/api/reports/cash-flow${q}`),
@@ -143,7 +148,8 @@ async function loadReports() {
     request(`/api/reports/management/treasury${q}`),
     request(`/api/reports/management/upwork${q}`),
     request(`/api/reports/management/partner-ledger${q}`),
-    request(`/api/reports/qbo/revenue-by-los${q}`)
+    request(`/api/reports/qbo/revenue-by-los${q}`),
+    request(`/api/reports/pk-tax?${pkTaxParams.toString()}`).catch(() => null)
   ]);
 
   state.data.reports = {
@@ -154,10 +160,11 @@ async function loadReports() {
       trialBalance,
       utilisation,
       managementPl,
-      managementTreasury,
+    managementTreasury,
     managementUpwork,
     managementPartner,
-    qboRevenueByLos
+    qboRevenueByLos,
+    pkTax
   };
 }
 

@@ -85,6 +85,9 @@ const STATEMENT_LINE_MAP = {
     dueFromRelatedParties: { label: 'Due from related parties', accountCodes: ['1200'], scope: 'balance-sheet' },
     capitalProjects: { label: 'Capital projects', accountCodes: ['1500'], scope: 'balance-sheet' },
     accountsPayable: { label: 'Accounts payable', accountCodes: ['2000'], scope: 'balance-sheet' },
+    payrollPayable: { label: 'Payroll payable', accountCodes: ['2010'], scope: 'balance-sheet' },
+    withholdingTaxPayable: { label: 'Withholding tax payable', accountCodes: ['2020'], scope: 'balance-sheet' },
+    otherPayrollDeductionsPayable: { label: 'Other payroll deductions payable', accountCodes: ['2030'], scope: 'balance-sheet' },
     creditCards: { label: 'Credit cards', accountCodes: ['2100'], scope: 'balance-sheet' },
     dueToRelatedParties: { label: 'Due to related parties', accountCodes: ['2200'], scope: 'balance-sheet' },
     partnerCapital: { label: 'Partner capital', accountCodes: ['3000'], scope: 'balance-sheet' }
@@ -392,8 +395,12 @@ export function buildBalanceSheet(db, { asOfDate = null, entity = null } = {}) {
   const ar = asMoney(balanceByCode.get('1100')?.net || 0);
   const towerCapex = asMoney(balanceByCode.get('1500')?.net || 0);
   const accountsPayable = asMoney(balanceByCode.get('2000')?.net || 0);
+  const payrollPayable = asMoney(balanceByCode.get('2010')?.net || 0);
+  const withholdingTaxPayable = asMoney(balanceByCode.get('2020')?.net || 0);
+  const otherPayrollDeductionsPayable = asMoney(balanceByCode.get('2030')?.net || 0);
   const creditCards = asMoney(balanceByCode.get('2100')?.net || 0);
   const partnerCapital = asMoney(balanceByCode.get('3000')?.net || 0);
+  const openingBalanceEquity = asMoney(balanceByCode.get('3900')?.net || 0);
   const rawJournalDueFrom = asMoney(balanceByCode.get('1200')?.net || 0);
   const rawJournalDueTo = asMoney(balanceByCode.get('2200')?.net || 0);
   const journalDueFrom = asMoney(Math.max(rawJournalDueFrom, 0) + Math.max(-rawJournalDueTo, 0));
@@ -407,8 +414,8 @@ export function buildBalanceSheet(db, { asOfDate = null, entity = null } = {}) {
     : asMoney(journalDueTo);
 
   const totalAssets = asMoney(cash + ar + towerCapex + dueFromRelatedParties);
-  const totalLiabilities = asMoney(accountsPayable + creditCards + dueToRelatedParties);
-  const totalEquity = asMoney(partnerCapital + currentEarnings);
+  const totalLiabilities = asMoney(accountsPayable + payrollPayable + withholdingTaxPayable + otherPayrollDeductionsPayable + creditCards + dueToRelatedParties);
+  const totalEquity = asMoney(partnerCapital + openingBalanceEquity + currentEarnings);
 
   return {
     reportingCurrency: String(db.settings?.reportingCurrency || 'USD').toUpperCase(),
@@ -423,12 +430,16 @@ export function buildBalanceSheet(db, { asOfDate = null, entity = null } = {}) {
     },
     liabilities: {
       accountsPayable,
+      payrollPayable,
+      withholdingTaxPayable,
+      otherPayrollDeductionsPayable,
       creditCards,
       dueToRelatedParties,
       totalLiabilities
     },
     equity: {
       partnerCapital,
+      openingBalanceEquity,
       currentEarnings,
       totalEquity
     },
